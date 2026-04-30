@@ -4,7 +4,7 @@ import vobject
 from datetime import datetime, timedelta
 
 # Configuration - Change these as needed
-KEYWORD = "PROJECT-SYNC"  # The specific phrase to look for in notes
+KEYWORD = "CAL-SYNC"  # The specific phrase to look for in notes
 NEW_INVITEE = "mailto:kristina.evanoff@gmail.com"
 
 def run_sync():
