@@ -17,4 +17,4 @@ jobs:
         env:
           ICLOUD_EMAIL: ${{ secrets.ICLOUD_EMAIL }}
           ICLOUD_PWD: ${{ secrets.ICLOUD_PWD }}
-        run: python sync_cal.py
+        run: python stalfamsync.py
