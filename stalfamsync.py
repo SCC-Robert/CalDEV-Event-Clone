@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 
 # Configuration - Change these as needed
 KEYWORD = "CAL-SYNC"  # The specific phrase to look for in notes
-NEW_INVITEE = "mailto:kristina.evanoff@gmail.com"
 SEARCH_DAYS = 30
 
 def run_sync():
@@ -21,6 +20,9 @@ def run_sync():
     # Use the URLs found during your discovery step
     source_cal = client.calendar(url="https://...source_url")
     target_cal = client.calendar(url="https://...target_url")
+
+    # Capture invitee email address
+    invitee_email_address = os.environ.get('NEW_INVITEE')
 
     # Time window: Now to +30 days
     start_time = datetime.now()
