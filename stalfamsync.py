@@ -68,7 +68,7 @@ def run_sync():
             
             # Add Invitee
             attendee = vevent.add('attendee')
-            attendee.value = NEW_INVITEE
+            attendee.value = invitee_email_address
             attendee.params['RSVP'] = ['TRUE']
             attendee.params['PARTSTAT'] = ['NEEDS-ACTION']
 
