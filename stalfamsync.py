@@ -6,8 +6,10 @@ from datetime import datetime, timedelta
 # Configuration - Change these as needed
 KEYWORD = "CAL-SYNC"  # The specific phrase to look for in notes
 NEW_INVITEE = "mailto:kristina.evanoff@gmail.com"
+SEARCH_DAYS = 30
 
 def run_sync():
+    # 1. Initialize Client
     client = caldav.DAVClient(
         url="https://caldav.icloud.com",
         username=os.environ.get('ICLOUD_EMAIL'),
@@ -20,39 +22,60 @@ def run_sync():
     source_cal = client.calendar(url="https://...source_url")
     target_cal = client.calendar(url="https://...target_url")
 
-    # Search window: today through the next 30 days
-    events = source_cal.date_search(
-        start=datetime.now(),
-        end=datetime.now() + timedelta(days=30)
-    )
+    # Time window: Now to +30 days
+    start_time = datetime.now()
+    end_time = start_time + timedelta(days=SEARCH_DAYS)
 
-    for event in events:
+    # 2. Pre-fetch Target UIDs to prevent duplicates
+    print("Scanning Target calendar for existing clones...")
+    target_events = target_cal.date_search(start=start_time, end=end_time)
+    
+    # Create a set of existing UIDs for O(1) lookup speed
+    existing_target_uids = set()
+    for te in target_events:
+        try:
+            # We use vobject to parse the UID specifically
+            tmp_ical = vobject.readOne(te.data)
+            existing_target_uids.add(tmp_ical.vevent.uid.value)
+        except Exception:
+            continue
+
+    # 3. Fetch Source Events
+    print(f"Checking Source calendar for keyword: '{KEYWORD}'...")
+    source_events = source_cal.date_search(start=start_time, end=end_time)
+
+    for event in source_events:
         ical_data = vobject.readOne(event.data)
         vevent = ical_data.vevent
         
-        # 1. Check for Keyword in the Description (Notes)
+        # Filter by Keyword
         description = getattr(vevent, 'description', None)
         if description and KEYWORD in description.value:
             
-            # 2. Prevent Duplicate UIDs in the same account
-            # We append a suffix so iCloud treats it as a new event
+            # Construct the "Cloned UID"
             original_uid = vevent.uid.value
-            vevent.uid.value = f"{original_uid}-cloned"
+            cloned_uid = f("{original_uid}-cloned")
 
-            # 3. Add the new Invitee
-            # Using 'attendee' property; 'mailto:' prefix is required
+            # 4. DUPLICATE CHECK: Only proceed if this UID isn't in our target set
+            if cloned_uid in existing_target_uids:
+                print(f"Skipping: '{vevent.summary.value}' (Already cloned)")
+                continue
+
+            # 5. Prepare the Clone
+            vevent.uid.value = cloned_uid
+            
+            # Add Invitee
             attendee = vevent.add('attendee')
             attendee.value = NEW_INVITEE
-            attendee.params['CN'] = ['New Invitee Name']
             attendee.params['RSVP'] = ['TRUE']
+            attendee.params['PARTSTAT'] = ['NEEDS-ACTION']
 
-            # 4. Upload to Target Calendar
+            # 6. Upload
             try:
                 target_cal.add_event(ical_data.serialize())
-                print(f"Successfully cloned: {vevent.summary.value}")
+                print(f"Cloned & Invited: {vevent.summary.value}")
             except Exception as e:
-                # This usually triggers if the cloned UID already exists in target
-                print(f"Skipped {vevent.summary.value}: {e}")
+                print(f"Error uploading {vevent.summary.value}: {e}")
 
 if __name__ == "__main__":
     run_sync()
