@@ -5,8 +5,8 @@ from datetime import datetime, timedelta
 import pytz
 
 # Configuration
-KEYWORD = "PROJECT-SYNC"
-NEW_INVITEE = "mailto:collaborator@example.com"
+KEYWORD = "CAL-SYNC"
+NEW_INVITEE = os.environ.get('INVITEE_EMAIL_ADDRESS')
 SEARCH_DAYS = 30
 SOURCE_NAME = "Home"
 TARGET_NAME = "Maddie’s Appointments"
