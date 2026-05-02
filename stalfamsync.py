@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 import pytz
 
 # Configuration
-# Tip: Ensure this matches exactly what's in your Note/Description
 KEYWORD = "CAL-SYNC" 
 NEW_INVITEE = os.environ.get('NEW_INVITEE')
 SEARCH_DAYS = 30
@@ -22,53 +21,44 @@ def run_sync():
     principal = client.principal()
     all_calendars = principal.calendars()
 
-    # 1. Use get_display_name() to fix Deprecation Warnings
     source_cal = next((c for c in all_calendars if c.get_display_name() == SOURCE_NAME), None)
     target_cal = next((c for c in all_calendars if c.get_display_name() == TARGET_NAME), None)
 
     if not source_cal or not target_cal:
         print("--- ERROR: Calendar Not Found ---")
-        for c in all_calendars:
-            print(f"Available: '{c.get_display_name()}'")
         return
 
-    # UTC Timezone-aware dates
     start_time = datetime.now(pytz.utc)
     end_time = start_time + timedelta(days=SEARCH_DAYS)
 
-    # 2. Use .search() with comp_class to fix Deprecation Warnings
-    print(f"Scanning '{TARGET_NAME}' for existing clones...")
+    # Fetch Target Events
+    print(f"Scanning '{TARGET_NAME}'...")
     target_events = target_cal.search(start=start_time, end=end_time, event=True)
-    
-    target_map = {}
-    for te in target_events:
-        try:
-            v_target = vobject.readOne(te.data).vevent
-            target_map[v_target.uid.value] = te
-        except: continue
+    target_map = {vobject.readOne(te.data).vevent.uid.value: te for te in target_events if hasattr(vobject.readOne(te.data), 'vevent')}
 
-    print(f"Checking '{SOURCE_NAME}' for events containing '{KEYWORD}'...")
+    # Fetch Source Events
+    print(f"Checking '{SOURCE_NAME}' for keyword '{KEYWORD}'...")
     source_events = source_cal.search(start=start_time, end=end_time, event=True)
     processed_cloned_uids = set()
 
-    found_any_source = False
     for se in source_events:
-        found_any_source = True
+        # DEEP FETCH: Ensure we have the notes/description
+        # If se.data is minimal, se.load() pulls the full ICS from iCloud
+        if not se.data or 'DESCRIPTION' not in se.data.upper():
+            se.load()
+            
         v_source = vobject.readOne(se.data).vevent
-        
-        # Robust description check
         description = getattr(v_source, 'description', None)
-        desc_text = description.value if description else ""
+        desc_text = str(description.value) if description else ""
         
-        # Case-insensitive keyword check
         if KEYWORD.lower() in desc_text.lower():
             cloned_uid = f"{v_source.uid.value}-cloned"
             processed_cloned_uids.add(cloned_uid)
             
-            # Prepare clone
+            # Prepare Cloned Event
             v_source.uid.value = cloned_uid
             
-            # Handle Attendee injection
+            # Ensure invitee is present
             if not hasattr(v_source, 'attendee'):
                 attendee = v_source.add('attendee')
                 attendee.value = NEW_INVITEE
@@ -76,22 +66,19 @@ def run_sync():
                 attendee.params['PARTSTAT'] = ['NEEDS-ACTION']
 
             if cloned_uid in target_map:
-                # Update logic
+                # Update if newer
                 v_target = vobject.readOne(target_map[cloned_uid].data).vevent
                 src_mod = getattr(v_source, 'last_modified', None)
                 tgt_mod = getattr(v_target, 'last_modified', None)
                 
                 if not tgt_mod or (src_mod and src_mod.value > tgt_mod.value):
-                    print(f"Updating changed event: {v_source.summary.value}")
+                    print(f"Updating: {v_source.summary.value}")
                     target_map[cloned_uid].save_component(v_source.parent)
             else:
-                print(f"Cloning new event: {v_source.summary.value}")
+                print(f"Found and Cloning: {v_source.summary.value}")
                 target_cal.add_event(v_source.parent.serialize())
 
-    if not found_any_source:
-        print("No events found in Source calendar within the time window.")
-
-    # 3. Cleanup Logic
+    # Cleanup (Deletions)
     for t_uid, t_event in target_map.items():
         if t_uid.endswith("-cloned") and t_uid not in processed_cloned_uids:
             print(f"Removing deleted/unflagged event: {t_uid}")
