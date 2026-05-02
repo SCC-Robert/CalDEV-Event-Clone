@@ -17,4 +17,7 @@ jobs:
         env:
           ICLOUD_EMAIL: ${{ secrets.ICLOUD_EMAIL }}
           ICLOUD_PWD: ${{ secrets.ICLOUD_PWD }}
+          NEW_INVITEE: ${{ secrets.NEW_INVITEE }}
+          SOURCE_CAL_URL: ${{ secrets.SOURCE_CAL_URL }}
+          TARGET_CAL_URL: ${{ secrets.TARGET_CAL_URL }}
         run: python stalfamsync.py
