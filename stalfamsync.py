@@ -18,8 +18,8 @@ def run_sync():
     principal = client.principal()
     
     # Use the URLs found during your discovery step
-    source_cal = client.calendar(url="https://...source_url")
-    target_cal = client.calendar(url="https://...target_url")
+    source_cal = os.environ.get('SOURCE_CAL_URL')
+    target_cal = os.environ.get('TARGET_CAL_URL')
 
     # Capture invitee email address
     invitee_email_address = os.environ.get('NEW_INVITEE')
