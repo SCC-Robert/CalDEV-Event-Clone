@@ -2,10 +2,14 @@ import os
 import caldav
 import vobject
 from datetime import datetime, timedelta
+import pytz
 
-# Configuration - Change these as needed
-KEYWORD = "CAL-SYNC"  # The specific phrase to look for in notes
+# Configuration
+KEYWORD = "CAL-SYNC"
+NEW_INVITEE = os.environ.get('NEW_INVITEE')
 SEARCH_DAYS = 30
+SOURCE_NAME = "Home"
+TARGET_NAME = "Maddie’s Appointments"
 
 def run_sync():
     # 1. Initialize Client
@@ -16,68 +20,75 @@ def run_sync():
     )
     
     principal = client.principal()
-    
-    # Use the URLs found during your discovery step
-    source_cal = os.environ.get('SOURCE_CAL_URL')
-    target_cal = os.environ.get('TARGET_CAL_URL')
+    all_calendars = principal.calendars()
 
-    # Capture invitee email address
-    invitee_email_address = os.environ.get('NEW_INVITEE')
+    # 2. Match calendars by Name
+    source_cal = next((c for c in all_calendars if c.name == SOURCE_NAME), None)
+    target_cal = next((c for c in all_calendars if c.name == TARGET_NAME), None)
 
-    # Time window: Now to +30 days
-    start_time = datetime.now()
+    # 3. Validation and Debugging
+    if not source_cal or not target_cal:
+        print("--- ERROR: Calendar Not Found ---")
+        print(f"Looked for: '{SOURCE_NAME}' -> Found: {source_cal is not None}")
+        print(f"Looked for: '{TARGET_NAME}' -> Found: {target_cal is not None}")
+        print("\nAvailable calendars in your account:")
+        for c in all_calendars:
+            print(f"- {c.name}")
+        return
+
+    # 4. Define Time Window (UTC for consistency)
+    start_time = datetime.now(pytz.utc)
     end_time = start_time + timedelta(days=SEARCH_DAYS)
 
-    # 2. Pre-fetch Target UIDs to prevent duplicates
-    print("Scanning Target calendar for existing clones...")
+    # 5. Fetch Target Events for Duplicate/Update Checking
+    print(f"Scanning '{TARGET_NAME}' for existing clones...")
     target_events = target_cal.date_search(start=start_time, end=end_time)
-    
-    # Create a set of existing UIDs for O(1) lookup speed
-    existing_target_uids = set()
+    target_map = {}
     for te in target_events:
         try:
-            # We use vobject to parse the UID specifically
-            tmp_ical = vobject.readOne(te.data)
-            existing_target_uids.add(tmp_ical.vevent.uid.value)
-        except Exception:
-            continue
+            v_target = vobject.readOne(te.data).vevent
+            target_map[v_target.uid.value] = te
+        except: continue
 
-    # 3. Fetch Source Events
-    print(f"Checking Source calendar for keyword: '{KEYWORD}'...")
+    # 6. Fetch Source Events
+    print(f"Checking '{SOURCE_NAME}' for events with '{KEYWORD}'...")
     source_events = source_cal.date_search(start=start_time, end=end_time)
+    processed_cloned_uids = set()
 
-    for event in source_events:
-        ical_data = vobject.readOne(event.data)
-        vevent = ical_data.vevent
+    for se in source_events:
+        v_source = vobject.readOne(se.data).vevent
+        description = getattr(v_source, 'description', None)
         
-        # Filter by Keyword
-        description = getattr(vevent, 'description', None)
         if description and KEYWORD in description.value:
+            cloned_uid = f"{v_source.uid.value}-cloned"
+            processed_cloned_uids.add(cloned_uid)
             
-            # Construct the "Cloned UID"
-            original_uid = vevent.uid.value
-            cloned_uid = f("{original_uid}-cloned")
+            # Update the UID and add the invitee
+            v_source.uid.value = cloned_uid
+            if not hasattr(v_source, 'attendee'):
+                attendee = v_source.add('attendee')
+                attendee.value = NEW_INVITEE
+                attendee.params['RSVP'] = ['TRUE']
 
-            # 4. DUPLICATE CHECK: Only proceed if this UID isn't in our target set
-            if cloned_uid in existing_target_uids:
-                print(f"Skipping: '{vevent.summary.value}' (Already cloned)")
-                continue
+            if cloned_uid in target_map:
+                # Update Logic
+                v_target = vobject.readOne(target_map[cloned_uid].data).vevent
+                src_mod = getattr(v_source, 'last_modified', None)
+                tgt_mod = getattr(v_target, 'last_modified', None)
+                
+                if not tgt_mod or (src_mod and src_mod.value > tgt_mod.value):
+                    print(f"Updating: {v_source.summary.value}")
+                    target_map[cloned_uid].save_component(v_source.parent)
+            else:
+                # Create Logic
+                print(f"Cloning: {v_source.summary.value}")
+                target_cal.add_event(v_source.parent.serialize())
 
-            # 5. Prepare the Clone
-            vevent.uid.value = cloned_uid
-            
-            # Add Invitee
-            attendee = vevent.add('attendee')
-            attendee.value = invitee_email_address
-            attendee.params['RSVP'] = ['TRUE']
-            attendee.params['PARTSTAT'] = ['NEEDS-ACTION']
-
-            # 6. Upload
-            try:
-                target_cal.add_event(ical_data.serialize())
-                print(f"Cloned & Invited: {vevent.summary.value}")
-            except Exception as e:
-                print(f"Error uploading {vevent.summary.value}: {e}")
+    # 7. Cleanup Logic (Deletions)
+    for t_uid, t_event in target_map.items():
+        if t_uid.endswith("-cloned") and t_uid not in processed_cloned_uids:
+            print(f"Deleting (Original removed/keyword cleared): {t_uid}")
+            t_event.delete()
 
 if __name__ == "__main__":
     run_sync()
