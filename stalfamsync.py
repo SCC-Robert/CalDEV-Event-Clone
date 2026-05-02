@@ -6,7 +6,7 @@ import pytz
 
 # Configuration
 KEYWORD = "CAL-SYNC"
-NEW_INVITEE = os.environ.get('INVITEE_EMAIL_ADDRESS')
+NEW_INVITEE = os.environ.get('NEW_INVITEE')
 SEARCH_DAYS = 30
 SOURCE_NAME = "Home"
 TARGET_NAME = "Maddie’s Appointments"
