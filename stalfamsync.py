@@ -59,15 +59,26 @@ def run_sync():
     principal = client.principal()
     all_calendars = principal.calendars()
 
-    source_cal = next((c for c in all_calendars if c.get_display_name() == SOURCE_NAME), None)
-    target_cal = next((c for c in all_calendars if c.get_display_name() == TARGET_NAME), None)
+    def find_calendar(calendars, name):
+        """Try straight apostrophe, then curly apostrophe, then return None."""
+        curly = name.replace("'", "\u2019")
+        return next(
+            (c for c in calendars if c.get_display_name() in (name, curly)),
+            None
+        )
+
+    source_cal = find_calendar(all_calendars, SOURCE_NAME)
+    target_cal = find_calendar(all_calendars, TARGET_NAME)
 
     if not source_cal or not target_cal:
         print("--- ERROR: Calendar Not Found ---")
+        print("  Calendars visible on this iCloud account:")
+        for c in all_calendars:
+            print(f"    repr={repr(c.get_display_name())}")
         if not source_cal:
-            print(f"  Missing source: '{SOURCE_NAME}'")
+            print(f"  Could not match source: {repr(SOURCE_NAME)}")
         if not target_cal:
-            print(f"  Missing target: '{TARGET_NAME}'")
+            print(f"  Could not match target: {repr(TARGET_NAME)}")
         return
 
     # Sync window: 2 days ago to SEARCH_DAYS ahead
