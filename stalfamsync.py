@@ -28,57 +28,68 @@ def run_sync():
         print("--- ERROR: Calendar Not Found ---")
         return
 
-    start_time = datetime.now(pytz.utc)
+    # Broaden window: Start from 2 days ago to catch any timezone-drifting events
+    start_time = datetime.now(pytz.utc) - timedelta(days=2)
     end_time = start_time + timedelta(days=SEARCH_DAYS)
 
-    # Fetch Target Events
-    print(f"Scanning '{TARGET_NAME}'...")
+    print(f"Scanning '{TARGET_NAME}' for existing clones...")
     target_events = target_cal.search(start=start_time, end=end_time, event=True)
-    target_map = {vobject.readOne(te.data).vevent.uid.value: te for te in target_events if hasattr(vobject.readOne(te.data), 'vevent')}
+    target_map = {}
+    for te in target_events:
+        try:
+            v_target = vobject.readOne(te.data).vevent
+            target_map[v_target.uid.value] = te
+        except: continue
 
-    # Fetch Source Events
-    print(f"Checking '{SOURCE_NAME}' for keyword '{KEYWORD}'...")
+    print(f"Checking '{SOURCE_NAME}' for events...")
     source_events = source_cal.search(start=start_time, end=end_time, event=True)
     processed_cloned_uids = set()
 
+    if not source_events:
+        print("No events found in 'Home' calendar at all for the next 30 days.")
+
     for se in source_events:
-        # DEEP FETCH: Ensure we have the notes/description
-        # If se.data is minimal, se.load() pulls the full ICS from iCloud
-        if not se.data or 'DESCRIPTION' not in se.data.upper():
-            se.load()
-            
+        # Force a full load to ensure Notes are visible
+        se.load()
         v_source = vobject.readOne(se.data).vevent
+        
+        summary = getattr(v_source, 'summary', None)
+        summary_text = summary.value if summary else "No Title"
+        
         description = getattr(v_source, 'description', None)
         desc_text = str(description.value) if description else ""
         
+        # LOGGING: See exactly what the script is checking
+        print(f"Examining: '{summary_text}' | Notes contain keyword: {KEYWORD.lower() in desc_text.lower()}")
+
         if KEYWORD.lower() in desc_text.lower():
             cloned_uid = f"{v_source.uid.value}-cloned"
             processed_cloned_uids.add(cloned_uid)
             
-            # Prepare Cloned Event
             v_source.uid.value = cloned_uid
             
-            # Ensure invitee is present
+            invitee_val = NEW_INVITEE
+            if invitee_val and not invitee_val.startswith("mailto:"):
+                invitee_val = f"mailto:{invitee_val}"
+
             if not hasattr(v_source, 'attendee'):
                 attendee = v_source.add('attendee')
-                attendee.value = NEW_INVITEE
+                attendee.value = invitee_val
                 attendee.params['RSVP'] = ['TRUE']
                 attendee.params['PARTSTAT'] = ['NEEDS-ACTION']
 
             if cloned_uid in target_map:
-                # Update if newer
                 v_target = vobject.readOne(target_map[cloned_uid].data).vevent
                 src_mod = getattr(v_source, 'last_modified', None)
                 tgt_mod = getattr(v_target, 'last_modified', None)
                 
                 if not tgt_mod or (src_mod and src_mod.value > tgt_mod.value):
-                    print(f"Updating: {v_source.summary.value}")
+                    print(f"Updating: {summary_text}")
                     target_map[cloned_uid].save_component(v_source.parent)
             else:
-                print(f"Found and Cloning: {v_source.summary.value}")
+                print(f"Found and Cloning: {summary_text}")
                 target_cal.add_event(v_source.parent.serialize())
 
-    # Cleanup (Deletions)
     for t_uid, t_event in target_map.items():
         if t_uid.endswith("-cloned") and t_uid not in processed_cloned_uids:
             print(f"Removing deleted/unflagged event: {t_uid}")
