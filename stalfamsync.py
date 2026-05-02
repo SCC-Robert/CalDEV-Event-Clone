@@ -1,5 +1,4 @@
 import os
-import copy
 import caldav
 import vobject
 from datetime import datetime, timedelta
@@ -15,31 +14,40 @@ TARGET_NAME = "Maddie's Appointments"
 
 def build_clone(ical_data_str, invitee_val):
     """
-    Parse a fresh copy of the iCal string, mutate it into a clone,
-    and return the modified vobject. Working on a freshly-parsed copy
-    avoids stale/None fields left over from the original iCloud response.
+    Build a minimal clone containing only title and date/time from the source.
+    Attendees, location, URL, description, alerts, and all other fields are
+    intentionally omitted so nothing leaks onto the target calendar.
     """
-    ical_copy = vobject.readOne(ical_data_str)
-    v = ical_copy.vevent
+    source   = vobject.readOne(ical_data_str).vevent
+    orig_uid = source.uid.value
+    summary  = getattr(source, 'summary', None)
+    summary_text = str(summary.value) if (summary and summary.value) else "Untitled Event"
+    dtstart  = source.dtstart
+    dtend    = getattr(source, 'dtend', None)
+    duration = getattr(source, 'duration', None)
 
-    # Stamp a new cloned UID
-    original_uid = v.uid.value
-    v.uid.value = f"{original_uid}-cloned"
+    # Build a brand-new minimal iCal object from scratch
+    cal = vobject.iCalendar()
+    ev  = vobject.Component('VEVENT')
+    cal.add(ev)
 
-    # Ensure every text field that vobject will backslash-escape is a string
-    for attr in ('summary', 'description', 'location'):
-        prop = getattr(v, attr, None)
-        if prop is not None and prop.value is None:
-            prop.value = ""
+    ev.add('uid').value     = f"{orig_uid}-cloned"
+    ev.add('summary').value = summary_text
+    ev.add('dtstamp').value = datetime.now(pytz.utc)
 
-    # Add invitee only if not already present
-    if invitee_val and not hasattr(v, 'attendee'):
-        attendee = v.add('attendee')
-        attendee.value = invitee_val          # already has mailto: prefix
-        attendee.params['RSVP'] = ['TRUE']
-        attendee.params['PARTSTAT'] = ['NEEDS-ACTION']
+    ev.add(dtstart)
+    if dtend:
+        ev.add(dtend)
+    elif duration:
+        ev.add(duration)
 
-    return ical_copy
+    if invitee_val:
+        att = ev.add('attendee')
+        att.value = invitee_val
+        att.params['RSVP']     = ['TRUE']
+        att.params['PARTSTAT'] = ['NEEDS-ACTION']
+
+    return cal
 
 
 def run_sync():
@@ -129,8 +137,8 @@ def run_sync():
             try:
                 v_target_obj = vobject.readOne(target_map[cloned_uid].data)
                 v_target     = v_target_obj.vevent
-                src_mod      = getattr(v_source,  'last_modified', None)
-                tgt_mod      = getattr(v_target,  'last_modified', None)
+                src_mod      = getattr(v_source, 'last_modified', None)
+                tgt_mod      = getattr(v_target, 'last_modified', None)
 
                 if not tgt_mod or (src_mod and src_mod.value > tgt_mod.value):
                     print(f"Updating: {summary_text}")
