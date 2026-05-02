@@ -12,38 +12,50 @@ SOURCE_NAME = "Home"
 TARGET_NAME = "Maddie's Appointments"
 
 
+def copy_dt_prop(ev, name, source_prop):
+    """Copy a date/time property from source, preserving params (e.g. VALUE=DATE for all-day)."""
+    new_prop       = ev.add(name)
+    new_prop.value = source_prop.value
+    if hasattr(source_prop, 'params'):
+        new_prop.params.update(source_prop.params)
+
+
 def build_clone(ical_data_str, invitee_val):
     """
     Build a minimal clone containing only title and date/time from the source.
     Attendees, location, URL, description, alerts, and all other fields are
     intentionally omitted so nothing leaks onto the target calendar.
     """
-    source   = vobject.readOne(ical_data_str).vevent
-    orig_uid = source.uid.value
-    summary  = getattr(source, 'summary', None)
+    source       = vobject.readOne(ical_data_str).vevent
+    orig_uid     = source.uid.value
+    summary      = getattr(source, 'summary', None)
     summary_text = str(summary.value) if (summary and summary.value) else "Untitled Event"
-    dtstart  = source.dtstart
-    dtend    = getattr(source, 'dtend', None)
-    duration = getattr(source, 'duration', None)
+    dtstart      = source.dtstart
+    dtend        = getattr(source, 'dtend', None)
+    duration     = getattr(source, 'duration', None)
+
+    now = datetime.now(pytz.utc)
 
     # Build a brand-new minimal iCal object from scratch
     cal = vobject.iCalendar()
-    ev  = vobject.Component('VEVENT')
+    ev  = vobject.newFromBehavior('vevent')
     cal.add(ev)
 
-    ev.add('uid').value     = f"{orig_uid}-cloned"
-    ev.add('summary').value = summary_text
-    ev.add('dtstamp').value = datetime.now(pytz.utc)
+    ev.add('uid').value           = f"{orig_uid}-cloned"
+    ev.add('summary').value       = summary_text
+    ev.add('dtstamp').value       = now
+    ev.add('last-modified').value = now
 
-    ev.add(dtstart)
+    # Copy date/time values cleanly, preserving all-day (VALUE=DATE) params
+    copy_dt_prop(ev, 'dtstart', dtstart)
     if dtend:
-        ev.add(dtend)
+        copy_dt_prop(ev, 'dtend', dtend)
     elif duration:
-        ev.add(duration)
+        ev.add('duration').value = duration.value
 
     if invitee_val:
-        att = ev.add('attendee')
-        att.value = invitee_val
+        att                    = ev.add('attendee')
+        att.value              = invitee_val
         att.params['RSVP']     = ['TRUE']
         att.params['PARTSTAT'] = ['NEEDS-ACTION']
 
@@ -64,7 +76,7 @@ def run_sync():
         password=os.environ.get('ICLOUD_PWD'),
     )
 
-    principal = client.principal()
+    principal     = client.principal()
     all_calendars = principal.calendars()
 
     def find_calendar(calendars, name):
@@ -110,7 +122,7 @@ def run_sync():
 
     for se in source_events:
         se.load()
-        raw_ical = se.data  # keep the original string for fresh parses
+        raw_ical = se.data
 
         try:
             ical_data = vobject.readOne(raw_ical)
@@ -133,7 +145,7 @@ def run_sync():
         summary_text = str(summary.value) if (summary and summary.value) else "Untitled Event"
 
         if cloned_uid in target_map:
-            # Update only if source is newer
+            # Update only if source is newer than the existing clone
             try:
                 v_target_obj = vobject.readOne(target_map[cloned_uid].data)
                 v_target     = v_target_obj.vevent
@@ -143,7 +155,7 @@ def run_sync():
                 if not tgt_mod or (src_mod and src_mod.value > tgt_mod.value):
                     print(f"Updating: {summary_text}")
                     clone = build_clone(raw_ical, invitee_val)
-                    target_map[cloned_uid].save_component(clone)
+                    target_map[cloned_uid].save_component(clone.vevent)
             except Exception as exc:
                 print(f"Error updating '{summary_text}': {exc}")
         else:
