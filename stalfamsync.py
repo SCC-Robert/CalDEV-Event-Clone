@@ -16,6 +16,13 @@ def run_sync():
     )
     
     principal = client.principal()
+    calendars = principal.calendars()
+
+    # DEBUG: This will print every calendar URL to your GitHub Action logs
+    print("--- AVAILABLE CALENDARS ---")
+    for cal in calendars:
+        print(f"Name: {cal.name} | URL: {cal.url}")
+    print("---------------------------")
     
     # Use the URLs found during your discovery step
     source_cal = os.environ.get('SOURCE_CAL_URL')
