@@ -1,7 +1,7 @@
 name: Filtered Calendar Clone
 on:
   schedule:
-    - cron: '0 * * * *' # Runs every hour
+    - cron: '12 3,15 * * *' # Runs every hour
   workflow_dispatch: # Allows you to run it manually for testing
 
 jobs:
